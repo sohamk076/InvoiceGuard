@@ -1,0 +1,39 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Diagnostic / Scratch scripts
+scripts/inspect-*.mjs
+scripts/test-cors.mjs
+scripts/test-live-*.mjs
+scripts/test-auth-*.mjs
+scripts/test-query.mjs
+scripts/test-supabase-*.mjs
+scripts/search-*.mjs
+
+# Node modules
+node_modules
+dist
+dist-ssr
+*.local
+
+# Environment variables & credentials
+.env
+.env.local
+.env.*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?

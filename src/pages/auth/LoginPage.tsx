@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useAuth } from '../../services/auth';
-import { ShieldCheck, Eye, EyeOff } from 'lucide-react';
+import { ShieldCheck, Eye, EyeOff, AlertCircle } from 'lucide-react';
 
 interface LoginPageProps {
   onNavigateToRegister: () => void;
@@ -23,7 +23,8 @@ export const LoginPage: React.FC<LoginPageProps> = ({
     e.preventDefault();
     setError(null);
 
-    if (!email) {
+    const cleanEmail = email.trim();
+    if (!cleanEmail) {
       setError('Email is required.');
       return;
     }
@@ -33,11 +34,15 @@ export const LoginPage: React.FC<LoginPageProps> = ({
     }
 
     setLoading(true);
-    const result = await login(email, password, rememberMe);
-    setLoading(false);
-
-    if (!result.success && result.error) {
-      setError(result.error);
+    try {
+      const result = await login(cleanEmail, password, rememberMe);
+      if (!result.success && result.error) {
+        setError(result.error);
+      }
+    } catch (err: any) {
+      setError(err?.message || 'An unexpected error occurred during sign in.');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -54,10 +59,11 @@ export const LoginPage: React.FC<LoginPageProps> = ({
         </div>
 
         <div className="bg-white py-8 px-6 border border-slate-200/90 rounded-2xl shadow-sm sm:px-10">
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form onSubmit={handleSubmit} className="space-y-4" noValidate>
             {error && (
-              <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-700">
-                {error}
+              <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-700 flex items-start gap-2">
+                <AlertCircle className="h-4 w-4 text-rose-600 shrink-0 mt-0.5" />
+                <span className="leading-relaxed">{error}</span>
               </div>
             )}
 
@@ -69,9 +75,13 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                 id="email"
                 type="email"
                 value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                onChange={(e) => {
+                  setEmail(e.target.value);
+                  if (error) setError(null);
+                }}
                 autoComplete="email"
-                className="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-sm text-slate-900 focus:outline-none focus:ring-1 focus:border-blue-700 focus:ring-blue-700"
+                disabled={loading}
+                className="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-sm text-slate-900 focus:outline-none focus:ring-1 focus:border-blue-700 focus:ring-blue-700 disabled:bg-slate-100"
               />
             </div>
 
@@ -84,14 +94,19 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                   id="password"
                   type={showPassword ? 'text' : 'password'}
                   value={password}
-                  onChange={(e) => setPassword(e.target.value)}
+                  onChange={(e) => {
+                    setPassword(e.target.value);
+                    if (error) setError(null);
+                  }}
                   autoComplete="current-password"
-                  className="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-sm text-slate-900 pr-10 focus:outline-none focus:ring-1 focus:border-blue-700 focus:ring-blue-700"
+                  disabled={loading}
+                  className="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-sm text-slate-900 pr-10 focus:outline-none focus:ring-1 focus:border-blue-700 focus:ring-blue-700 disabled:bg-slate-100"
                 />
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
                   className="absolute inset-y-0 right-0 flex items-center pr-3 text-slate-400 hover:text-slate-600"
+                  tabIndex={-1}
                 >
                   {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                 </button>
@@ -104,6 +119,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                   type="checkbox"
                   checked={rememberMe}
                   onChange={(e) => setRememberMe(e.target.checked)}
+                  disabled={loading}
                   className="h-4 w-4 rounded border-slate-300 text-blue-700 focus:ring-blue-700"
                 />
                 <span className="text-xs text-slate-600">Remember me</span>
@@ -121,15 +137,17 @@ export const LoginPage: React.FC<LoginPageProps> = ({
             <button
               type="submit"
               disabled={loading}
-              className="w-full rounded-xl bg-blue-700 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-800 focus:outline-none focus:ring-2 focus:ring-blue-600 focus:ring-offset-1 disabled:opacity-50 transition-colors"
+              className="w-full rounded-xl bg-blue-700 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-800 focus:outline-none focus:ring-2 focus:ring-blue-600 focus:ring-offset-1 disabled:opacity-50 transition-colors flex items-center justify-center gap-2"
             >
-              {loading ? 'Signing in...' : 'Sign in'}
+              {loading && <div className="h-4 w-4 border-2 border-white border-t-transparent animate-spin rounded-full" />}
+              <span>{loading ? 'Signing in...' : 'Sign in'}</span>
             </button>
           </form>
 
           <div className="mt-6 text-center text-xs text-slate-500">
             <span>Don't have an account? </span>
             <button
+              type="button"
               onClick={onNavigateToRegister}
               className="text-blue-700 hover:underline font-medium"
             >

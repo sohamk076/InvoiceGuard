@@ -12,7 +12,13 @@ export const isSupabaseConfigured = Boolean(
 );
 
 export const supabase = isSupabaseConfigured
-  ? createClient(supabaseUrl, supabaseAnonKey)
+  ? createClient(supabaseUrl, supabaseAnonKey, {
+      auth: {
+        persistSession: true,
+        autoRefreshToken: true,
+        detectSessionInUrl: true,
+      },
+    })
   : null;
 
 export async function testSupabaseConnection(): Promise<{
@@ -35,7 +41,7 @@ export async function testSupabaseConnection(): Promise<{
       return {
         configured: true,
         connected: false,
-        message: 'Reached Supabase, but query to table "vendors" failed (run migrations if first time setup).',
+        message: 'Connected to Supabase, but query to table "vendors" returned an error.',
         error: error.message,
       };
     }

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useAuth } from '../../services/auth';
-import { ShieldCheck } from 'lucide-react';
+import { ShieldCheck, AlertCircle, CheckCircle2 } from 'lucide-react';
 
 interface ForgotPasswordPageProps {
   onNavigateToLogin: () => void;
@@ -20,19 +20,24 @@ export const ForgotPasswordPage: React.FC<ForgotPasswordPageProps> = ({
     setError(null);
     setMessage(null);
 
-    if (!email) {
+    const cleanEmail = email.trim();
+    if (!cleanEmail) {
       setError('Email is required.');
       return;
     }
 
     setLoading(true);
-    const result = await resetPassword(email);
-    setLoading(false);
-
-    if (result.success) {
-      setMessage(result.message || 'Password reset link sent.');
-    } else if (result.error) {
-      setError(result.error);
+    try {
+      const result = await resetPassword(cleanEmail);
+      if (result.success) {
+        setMessage(result.message || 'Password reset link dispatched.');
+      } else if (result.error) {
+        setError(result.error);
+      }
+    } catch (err: any) {
+      setError(err?.message || 'An unexpected error occurred.');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -49,15 +54,17 @@ export const ForgotPasswordPage: React.FC<ForgotPasswordPageProps> = ({
         </div>
 
         <div className="bg-white py-8 px-6 border border-slate-200/90 rounded-2xl shadow-sm sm:px-10">
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form onSubmit={handleSubmit} className="space-y-4" noValidate>
             {error && (
-              <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-700">
-                {error}
+              <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-700 flex items-start gap-2">
+                <AlertCircle className="h-4 w-4 text-rose-600 shrink-0 mt-0.5" />
+                <span className="leading-relaxed">{error}</span>
               </div>
             )}
             {message && (
-              <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-xs text-emerald-800">
-                {message}
+              <div className="p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 text-xs text-emerald-800 flex items-start gap-2">
+                <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0 mt-0.5" />
+                <span className="leading-relaxed font-medium">{message}</span>
               </div>
             )}
 
@@ -69,23 +76,29 @@ export const ForgotPasswordPage: React.FC<ForgotPasswordPageProps> = ({
                 id="email"
                 type="email"
                 value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                onChange={(e) => {
+                  setEmail(e.target.value);
+                  if (error) setError(null);
+                }}
                 autoComplete="email"
-                className="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-sm text-slate-900 focus:outline-none focus:ring-1 focus:border-blue-700 focus:ring-blue-700"
+                disabled={loading}
+                className="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-sm text-slate-900 focus:outline-none focus:ring-1 focus:border-blue-700 focus:ring-blue-700 disabled:bg-slate-100"
               />
             </div>
 
             <button
               type="submit"
               disabled={loading}
-              className="w-full rounded-xl bg-blue-700 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-800 focus:outline-none focus:ring-2 focus:ring-blue-600 focus:ring-offset-1 disabled:opacity-50 transition-colors"
+              className="w-full rounded-xl bg-blue-700 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-800 focus:outline-none focus:ring-2 focus:ring-blue-600 focus:ring-offset-1 disabled:opacity-50 transition-colors flex items-center justify-center gap-2"
             >
-              {loading ? 'Sending link...' : 'Reset password'}
+              {loading && <div className="h-4 w-4 border-2 border-white border-t-transparent animate-spin rounded-full" />}
+              <span>{loading ? 'Sending link...' : 'Reset password'}</span>
             </button>
           </form>
 
           <div className="mt-6 text-center text-xs text-slate-500">
             <button
+              type="button"
               onClick={onNavigateToLogin}
               className="text-blue-700 hover:underline font-medium"
             >

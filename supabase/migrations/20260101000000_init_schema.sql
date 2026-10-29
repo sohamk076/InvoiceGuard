@@ -189,10 +189,55 @@ ALTER TABLE public.audit_logs ENABLE ROW LEVEL SECURITY;
 -- USER-SPECIFIC ROW LEVEL SECURITY POLICIES (Users access only their own data)
 
 -- Profiles: Users can select and update only their own profile
-CREATE POLICY "Users access own profile" ON public.profiles
-    FOR ALL TO authenticated
-    USING (auth.uid() = id)
-    WITH CHECK (auth.uid() = id);
+
+-- Profiles: users can only access their own profile.
+DROP POLICY IF EXISTS "Users access own profile"
+ON public.profiles;
+
+CREATE POLICY "Users read own profile"
+ON public.profiles
+FOR SELECT TO authenticated
+USING (auth.uid() = id);
+
+CREATE POLICY "Users insert own profile as auditor"
+ON public.profiles
+FOR INSERT TO authenticated
+WITH CHECK (
+    auth.uid() = id
+    AND role = 'auditor'
+);
+
+CREATE POLICY "Users update own profile"
+ON public.profiles
+FOR UPDATE TO authenticated
+USING (auth.uid() = id)
+WITH CHECK (auth.uid() = id);
+
+-- Prevent users from changing their own role.
+CREATE OR REPLACE FUNCTION public.prevent_profile_role_escalation()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = ''
+AS $$
+BEGIN
+    IF auth.uid() IS NOT NULL
+       AND NEW.role IS DISTINCT FROM OLD.role THEN
+        RAISE EXCEPTION 'Profile role changes are not allowed';
+    END IF;
+
+    RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS prevent_profile_role_escalation
+ON public.profiles;
+
+CREATE TRIGGER prevent_profile_role_escalation
+BEFORE UPDATE OF role ON public.profiles
+FOR EACH ROW
+EXECUTE FUNCTION public.prevent_profile_role_escalation();
+
 
 -- Vendors: Scoped to user_id
 CREATE POLICY "Users read own vendors" ON public.vendors

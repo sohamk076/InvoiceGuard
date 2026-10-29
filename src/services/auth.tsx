@@ -16,11 +16,18 @@ export interface User {
   profileCompleted: boolean;
 }
 
+interface RegisterResult {
+  success: boolean;
+  requiresEmailConfirmation?: boolean;
+  message?: string;
+  error?: string;
+}
+
 interface AuthContextType {
   user: User | null;
   loading: boolean;
   login: (email: string, password: string, rememberMe?: boolean) => Promise<{ success: boolean; error?: string }>;
-  register: (fullName: string, email: string, password: string) => Promise<{ success: boolean; error?: string }>;
+  register: (fullName: string, email: string, password: string) => Promise<RegisterResult>;
   updateBusinessProfile: (profile: {
     organizationName: string;
     organizationGstin?: string;
@@ -37,6 +44,96 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 const LOCAL_AUTH_KEY = 'invoiceguard_auth_user';
 const LOCAL_USERS_KEY = 'invoiceguard_registered_users';
+
+function getLocalUsersList(): any[] {
+  try {
+    const stored = localStorage.getItem(LOCAL_USERS_KEY);
+    return stored ? JSON.parse(stored) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveLocalUsersList(list: any[]): void {
+  try {
+    localStorage.setItem(LOCAL_USERS_KEY, JSON.stringify(list));
+  } catch {
+    // Ignore storage write issues
+  }
+}
+
+function createLocalUser(fullName: string, email: string, password?: string): User {
+  const usersList = getLocalUsersList();
+  const existing = usersList.find((u) => u.email?.toLowerCase() === email.toLowerCase());
+  
+  if (existing) {
+    if (password) existing.password = password;
+    existing.fullName = fullName;
+    saveLocalUsersList(usersList);
+    return {
+      id: existing.id,
+      email: existing.email,
+      fullName: existing.fullName,
+      role: 'auditor',
+      organizationName: existing.organizationName || undefined,
+      organizationGstin: existing.organizationGstin || undefined,
+      drugLicenseNumber: existing.drugLicenseNumber || undefined,
+      contactPhone: existing.contactPhone || undefined,
+      address: existing.address || undefined,
+      operatingState: existing.operatingState || undefined,
+      profileCompleted: Boolean(existing.organizationName && existing.organizationName.trim().length > 0),
+    };
+  }
+
+  const newUserObj = {
+    id: `usr-${Date.now().toString(36)}`,
+    email,
+    fullName,
+    password: password || '',
+    role: 'auditor',
+    organizationName: undefined,
+    organizationGstin: undefined,
+    createdAt: new Date().toISOString(),
+  };
+
+  usersList.push(newUserObj);
+  saveLocalUsersList(usersList);
+
+  return {
+    id: newUserObj.id,
+    email: newUserObj.email,
+    fullName: newUserObj.fullName,
+    role: 'auditor',
+    organizationName: undefined,
+    organizationGstin: undefined,
+    profileCompleted: false,
+  };
+}
+
+function tryLocalLogin(cleanEmail: string, password: string): { success: boolean; error?: string; user?: User } {
+  const usersList = getLocalUsersList();
+  const matched = usersList.find((u) => u.email?.toLowerCase() === cleanEmail);
+  if (!matched) {
+    return { success: false, error: 'Invalid email or password. Please verify your credentials and try again.' };
+  }
+  if (matched.password && matched.password !== password) {
+    return { success: false, error: 'Invalid email or password. Please verify your credentials and try again.' };
+  }
+  const loggedUser: User = {
+    id: matched.id,
+    email: matched.email,
+    fullName: matched.fullName || cleanEmail.split('@')[0],
+    role: 'auditor',
+    organizationName: matched.organizationName || undefined,
+    organizationGstin: matched.organizationGstin || undefined,
+    drugLicenseNumber: matched.drugLicenseNumber || undefined,
+    contactPhone: matched.contactPhone || undefined,
+    address: matched.address || undefined,
+    operatingState: matched.operatingState || undefined,
+    profileCompleted: Boolean(matched.organizationName && matched.organizationName.trim().length > 0),
+  };
+  return { success: true, user: loggedUser };
+}
 
 function parseUserFromMeta(authUser: any, metaObj?: any): User {
   const meta = metaObj || authUser?.user_metadata || {};
@@ -65,44 +162,51 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     let subscription: any = null;
 
-    async function initAuth() {
-      if (isSupabaseConfigured && supabase) {
+    function restoreLocalUser() {
+      const stored = localStorage.getItem(LOCAL_AUTH_KEY);
+      if (stored) {
         try {
-          const { data: { session } } = await supabase.auth.getSession();
-          if (session?.user) {
-            setUser(parseUserFromMeta(session.user));
-          } else {
-            setUser(null);
-          }
-
-          const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
-            if (session?.user) {
-              setUser(parseUserFromMeta(session.user));
-            } else {
-              setUser(null);
-            }
+          const parsed = JSON.parse(stored);
+          setUser({
+            ...parsed,
+            profileCompleted: Boolean(parsed.organizationName && parsed.organizationName.trim().length > 0),
           });
-          subscription = authListener?.subscription;
         } catch {
+          localStorage.removeItem(LOCAL_AUTH_KEY);
           setUser(null);
         }
       } else {
-        // Local standalone auth session restoration
-        const stored = localStorage.getItem(LOCAL_AUTH_KEY);
-        if (stored) {
-          try {
-            const parsed = JSON.parse(stored);
-            setUser({
-              ...parsed,
-              profileCompleted: Boolean(parsed.organizationName && parsed.organizationName.trim().length > 0),
-            });
-          } catch {
-            localStorage.removeItem(LOCAL_AUTH_KEY);
-            setUser(null);
+        setUser(null);
+      }
+    }
+
+    async function initAuth() {
+      if (isSupabaseConfigured && supabase) {
+        try {
+          const { data: { session }, error } = await supabase.auth.getSession();
+          if (session?.user && !error) {
+            setUser(parseUserFromMeta(session.user));
+          } else {
+            restoreLocalUser();
           }
-        } else {
-          setUser(null);
+
+          const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
+            if (session?.user) {
+              const u = parseUserFromMeta(session.user);
+              setUser(u);
+              localStorage.setItem(LOCAL_AUTH_KEY, JSON.stringify(u));
+            } else if (event === 'SIGNED_OUT') {
+              setUser(null);
+              localStorage.removeItem(LOCAL_AUTH_KEY);
+            }
+          });
+          subscription = authListener?.subscription;
+        } catch (err) {
+          console.warn('Supabase auth session initialization error, using local state:', err);
+          restoreLocalUser();
         }
+      } else {
+        restoreLocalUser();
       }
       setLoading(false);
     }
@@ -122,161 +226,205 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [user]);
 
   const login = async (email: string, password: string, rememberMe: boolean = true) => {
-    setLoading(true);
     const cleanEmail = email.trim().toLowerCase();
 
     if (!cleanEmail || !password) {
-      setLoading(false);
       return { success: false, error: 'Email and password are required.' };
     }
 
     if (isSupabaseConfigured && supabase) {
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email: cleanEmail,
-        password,
-      });
+      try {
+        const { data, error } = await supabase.auth.signInWithPassword({
+          email: cleanEmail,
+          password,
+        });
 
-      if (error) {
-        setLoading(false);
-        return { success: false, error: error.message };
-      }
+        if (error) {
+          const errMsg = error.message || '';
+          if (errMsg.includes('Invalid login credentials')) {
+            // Check if account was registered in local storage fallback
+            const localResult = tryLocalLogin(cleanEmail, password);
+            if (localResult.success && localResult.user) {
+              setUser(localResult.user);
+              if (rememberMe) {
+                localStorage.setItem(LOCAL_AUTH_KEY, JSON.stringify(localResult.user));
+              }
+              return { success: true };
+            }
+            return {
+              success: false,
+              error: 'Invalid email or password. Please verify your credentials and try again.',
+            };
+          }
 
-      if (data.user) {
-        const loggedUser = parseUserFromMeta(data.user);
-        setUser(loggedUser);
-        if (rememberMe) {
-          localStorage.setItem(LOCAL_AUTH_KEY, JSON.stringify(loggedUser));
+          if (errMsg.includes('Email not confirmed')) {
+            return {
+              success: false,
+              error: 'Your email address has not been confirmed yet. Please verify your email via the confirmation link sent by Supabase.',
+            };
+          }
+
+          return { success: false, error: error.message };
         }
-        setLoading(false);
-        return { success: true };
+
+        if (data?.user) {
+          const loggedUser = parseUserFromMeta(data.user);
+          setUser(loggedUser);
+          if (rememberMe) {
+            localStorage.setItem(LOCAL_AUTH_KEY, JSON.stringify(loggedUser));
+          }
+          return { success: true };
+        }
+      } catch (err: any) {
+        console.error('Supabase authentication network error:', err);
+        // Fallback to local user if offline or network blocked
+        const localResult = tryLocalLogin(cleanEmail, password);
+        if (localResult.success && localResult.user) {
+          setUser(localResult.user);
+          if (rememberMe) {
+            localStorage.setItem(LOCAL_AUTH_KEY, JSON.stringify(localResult.user));
+          }
+          return { success: true };
+        }
+
+        const errMsg = err?.message || String(err);
+        if (
+          errMsg.includes('Failed to fetch') ||
+          errMsg.includes('NetworkError') ||
+          errMsg.includes('CORS') ||
+          errMsg.includes('AuthRetryableFetchError')
+        ) {
+          return {
+            success: false,
+            error: 'Unable to reach the authentication server. Please check your network connection and ensure browser extensions are not blocking requests.',
+          };
+        }
+        return { success: false, error: errMsg };
       }
     }
 
-    // Local standalone authentication
-    let usersList: any[] = [];
-    try {
-      const stored = localStorage.getItem(LOCAL_USERS_KEY);
-      usersList = stored ? JSON.parse(stored) : [];
-    } catch {
-      usersList = [];
-    }
-
-    const matched = usersList.find((u) => u.email.toLowerCase() === cleanEmail);
-    if (matched) {
-      if (matched.password !== password) {
-        setLoading(false);
-        return { success: false, error: 'Invalid email or password.' };
-      }
-      const loggedUser: User = {
-        id: matched.id,
-        email: matched.email,
-        fullName: matched.fullName,
-        role: 'auditor',
-        organizationName: matched.organizationName || undefined,
-        organizationGstin: matched.organizationGstin || undefined,
-        drugLicenseNumber: matched.drugLicenseNumber || undefined,
-        contactPhone: matched.contactPhone || undefined,
-        address: matched.address || undefined,
-        profileCompleted: Boolean(matched.organizationName && matched.organizationName.trim().length > 0),
-      };
-      setUser(loggedUser);
+    // Local standalone authentication fallback
+    const localResult = tryLocalLogin(cleanEmail, password);
+    if (localResult.success && localResult.user) {
+      setUser(localResult.user);
       if (rememberMe) {
-        localStorage.setItem(LOCAL_AUTH_KEY, JSON.stringify(loggedUser));
+        localStorage.setItem(LOCAL_AUTH_KEY, JSON.stringify(localResult.user));
       }
-      setLoading(false);
       return { success: true };
     }
-
-    setLoading(false);
-    return { success: false, error: 'No account found with this email. Please register first.' };
+    return { success: false, error: localResult.error || 'No account found with this email. Please register first.' };
   };
 
-  const register = async (fullName: string, email: string, password: string) => {
-    setLoading(true);
+  const register = async (fullName: string, email: string, password: string): Promise<RegisterResult> => {
     const cleanEmail = email.trim().toLowerCase();
     const cleanName = fullName.trim();
 
     if (!cleanName || !cleanEmail || !password) {
-      setLoading(false);
       return { success: false, error: 'All fields are required.' };
     }
 
+    if (password.length < 6) {
+      return { success: false, error: 'Password must be at least 6 characters.' };
+    }
+
     if (isSupabaseConfigured && supabase) {
-      const { data, error } = await supabase.auth.signUp({
-        email: cleanEmail,
-        password,
-        options: {
-          data: {
-            full_name: cleanName,
-            organization_name: '',
-            organization_gstin: '',
+      try {
+        const { data, error } = await supabase.auth.signUp({
+          email: cleanEmail,
+          password,
+          options: {
+            data: {
+              full_name: cleanName,
+              organization_name: '',
+              organization_gstin: '',
+            },
           },
-        },
-      });
+        });
 
-      if (error) {
-        setLoading(false);
-        return { success: false, error: error.message };
-      }
+        if (error) {
+          const errMsg = error.message || '';
+          if (errMsg.includes('rate limit') || (error as any).code === 'over_email_send_rate_limit') {
+            // Register in local workspace fallback so testing is never blocked
+            const localObj = createLocalUser(cleanName, cleanEmail, password);
+            setUser(localObj);
+            localStorage.setItem(LOCAL_AUTH_KEY, JSON.stringify(localObj));
+            return {
+              success: true,
+              message: 'Supabase email send rate limit exceeded on free tier. Account created in local workspace cache so you can continue testing immediately.',
+            };
+          }
+          if (errMsg.includes('already registered') || errMsg.includes('already exists')) {
+            return {
+              success: false,
+              error: 'An account with this email address already exists. Please sign in instead.',
+            };
+          }
+          return { success: false, error: error.message };
+        }
 
-      if (data.user) {
-        const newUser: User = {
-          id: data.user.id,
-          email: data.user.email || cleanEmail,
-          fullName: cleanName,
-          role: 'auditor',
-          organizationName: undefined,
-          organizationGstin: undefined,
-          profileCompleted: false,
-        };
-        setUser(newUser);
-        localStorage.setItem(LOCAL_AUTH_KEY, JSON.stringify(newUser));
-        setLoading(false);
-        return { success: true };
+        // Check if user already exists (Supabase returns empty identities array when user already exists with email confirmations on)
+        if (data?.user && Array.isArray(data.user.identities) && data.user.identities.length === 0) {
+          return {
+            success: false,
+            error: 'An account with this email address already exists. Please sign in instead.',
+          };
+        }
+
+        if (data?.user) {
+          // If session is null, Supabase requires email confirmation
+          if (!data.session) {
+            createLocalUser(cleanName, cleanEmail, password);
+            return {
+              success: true,
+              requiresEmailConfirmation: true,
+              message: 'Account registered successfully! A confirmation link has been sent to your email. Please check your inbox before signing in.',
+            };
+          }
+
+          const newUser: User = {
+            id: data.user.id,
+            email: data.user.email || cleanEmail,
+            fullName: cleanName,
+            role: 'auditor',
+            organizationName: undefined,
+            organizationGstin: undefined,
+            profileCompleted: false,
+          };
+          setUser(newUser);
+          localStorage.setItem(LOCAL_AUTH_KEY, JSON.stringify(newUser));
+          return { success: true };
+        }
+      } catch (err: any) {
+        console.error('Supabase registration error:', err);
+        const errMsg = err?.message || String(err);
+        if (
+          errMsg.includes('Failed to fetch') ||
+          errMsg.includes('NetworkError') ||
+          errMsg.includes('CORS') ||
+          errMsg.includes('AuthRetryableFetchError')
+        ) {
+          // Register locally if server is unreachable
+          const localObj = createLocalUser(cleanName, cleanEmail, password);
+          setUser(localObj);
+          localStorage.setItem(LOCAL_AUTH_KEY, JSON.stringify(localObj));
+          return {
+            success: true,
+            message: 'Unable to reach authentication server. Account created in local workspace cache.',
+          };
+        }
+        return { success: false, error: errMsg };
       }
     }
 
     // Local standalone registration
-    let usersList: any[] = [];
-    try {
-      const stored = localStorage.getItem(LOCAL_USERS_KEY);
-      usersList = stored ? JSON.parse(stored) : [];
-    } catch {
-      usersList = [];
-    }
-
-    if (usersList.some((u) => u.email.toLowerCase() === cleanEmail)) {
-      setLoading(false);
+    const usersList = getLocalUsersList();
+    if (usersList.some((u) => u.email?.toLowerCase() === cleanEmail)) {
       return { success: false, error: 'An account with this email already exists.' };
     }
 
-    const newUserObj = {
-      id: `usr-${Date.now().toString(36)}`,
-      email: cleanEmail,
-      fullName: cleanName,
-      password,
-      role: 'auditor',
-      organizationName: undefined,
-      organizationGstin: undefined,
-      createdAt: new Date().toISOString(),
-    };
-
-    usersList.push(newUserObj);
-    localStorage.setItem(LOCAL_USERS_KEY, JSON.stringify(usersList));
-
-    const loggedUser: User = {
-      id: newUserObj.id,
-      email: newUserObj.email,
-      fullName: newUserObj.fullName,
-      role: 'auditor',
-      organizationName: undefined,
-      organizationGstin: undefined,
-      profileCompleted: false,
-    };
-    setUser(loggedUser);
-    localStorage.setItem(LOCAL_AUTH_KEY, JSON.stringify(loggedUser));
-
-    setLoading(false);
+    const localObj = createLocalUser(cleanName, cleanEmail, password);
+    setUser(localObj);
+    localStorage.setItem(LOCAL_AUTH_KEY, JSON.stringify(localObj));
     return { success: true };
   };
 
@@ -332,12 +480,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           return { success: false, error: metaErr.message };
         }
 
-        // Try upserting to profiles table if available
+        // Try upserting to profiles table with strict RLS conformity
         try {
           await supabase.from('profiles').upsert({
             id: user.id,
             email: user.email,
             full_name: user.fullName,
+            role: 'auditor',
             medical_store_name: cleanOrgName,
             organization_gstin: cleanGstin || null,
             drug_license_number: cleanDl || null,
@@ -347,8 +496,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             profile_completed: true,
             updated_at: new Date().toISOString(),
           });
-        } catch {
-          // Table upsert non-blocking
+        } catch (tableErr) {
+          console.warn('Profiles table upsert warning (non-blocking):', tableErr);
         }
       } catch (err: any) {
         return { success: false, error: err?.message || 'Failed to update business profile in database.' };
@@ -360,7 +509,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const stored = localStorage.getItem(LOCAL_USERS_KEY);
       const list = stored ? JSON.parse(stored) : [];
       const updatedList = list.map((u: any) =>
-        u.id === user.id || u.email.toLowerCase() === user.email.toLowerCase()
+        u.id === user.id || u.email?.toLowerCase() === user.email.toLowerCase()
           ? {
               ...u,
               organizationName: cleanOrgName,
@@ -368,6 +517,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               drugLicenseNumber: cleanDl,
               contactPhone: cleanPhone,
               address: cleanAddress,
+              operatingState: cleanState,
             }
           : u
       );
@@ -388,9 +538,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     if (isSupabaseConfigured && supabase) {
-      const { error } = await supabase.auth.resetPasswordForEmail(cleanEmail);
-      if (error) {
-        return { success: false, error: error.message };
+      try {
+        const { error } = await supabase.auth.resetPasswordForEmail(cleanEmail);
+        if (error) {
+          return { success: false, error: error.message };
+        }
+      } catch (err: any) {
+        return { success: false, error: err?.message || 'Unable to reach authentication server.' };
       }
     }
 
