@@ -1,0 +1,9 @@
+import type { VercelRequest, VercelResponse } from '@vercel/node';
+
+export default async function handler(req: VercelRequest, res: VercelResponse) {
+  return res.status(200).json({
+    status: 'ok',
+    system: 'InvoiceGuard Fraud Detection Subsystem',
+    timestamp: new Date().toISOString(),
+  });
+}
